@@ -36,6 +36,9 @@
 #include "ApplicationCacheStorage.h"
 #include "Attribute.h"
 #include "content/address_detector.h"
+#if ENABLE(WEB_AUDIO)
+#include "AudioDestination.h"
+#endif
 #include "Chrome.h"
 #include "ChromeClientAndroid.h"
 #include "ChromiumIncludes.h"
@@ -430,6 +433,7 @@ WebViewCore::WebViewCore(JNIEnv* env, jobject javaWebViewCore, WebCore::Frame* m
     , m_maxYScroll(240/4)
     , m_scrollOffsetX(0)
     , m_scrollOffsetY(0)
+    , m_scrollSetTime(0)
     , m_mousePos(WebCore::IntPoint(0,0))
     , m_screenWidth(320)
     , m_screenHeight(240)
@@ -562,7 +566,7 @@ WebViewCore::~WebViewCore()
     WebViewCore::removeInstance(this);
 
     // Release the focused view
-    Release(m_popupReply);
+    ::Release(m_popupReply);
 
     if (m_javaGlue->m_obj) {
         JNIEnv* env = JSC::Bindings::getJNIEnv();
@@ -570,6 +574,7 @@ WebViewCore::~WebViewCore()
         m_javaGlue->m_obj = 0;
     }
     delete m_javaGlue;
+    delete m_textFieldInitDataGlue;
 }
 
 WebViewCore* WebViewCore::getWebViewCore(const WebCore::FrameView* view)
@@ -2014,6 +2019,44 @@ AndroidHitTestResult WebViewCore::hitTestAtPoint(int x, int y, int slop, bool do
     return androidHitResult;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+
+#if ENABLE(WEB_AUDIO)
+void WebViewCore::addAudioDestination(WebCore::AudioDestination* t)
+{
+//    SkDebugf("----------- addAudioDestination %p", t);
+    *m_audioDestinations.append() = t;
+}
+
+void WebViewCore::removeAudioDestination(WebCore::AudioDestination* t)
+{
+//    SkDebugf("----------- removeAudioDestination %p", t);
+    int index = m_audioDestinations.find(t);
+    if (index < 0) {
+        SkDebugf("--------------- removeAudioDestination not found! %p\n", t);
+    } else {
+        m_audioDestinations.removeShuffle(index);
+    }
+}
+
+void WebViewCore::pauseAudioDestinations()
+{
+    WebCore::AudioDestination** iter = m_audioDestinations.begin();
+    WebCore::AudioDestination** stop = m_audioDestinations.end();
+
+    for (; iter < stop; ++iter)
+        (*iter)->pause();
+}
+
+void WebViewCore::resumeAudioDestinations()
+{
+    WebCore::AudioDestination** iter = m_audioDestinations.begin();
+    WebCore::AudioDestination** stop = m_audioDestinations.end();
+
+    for (; iter < stop; ++iter)
+        (*iter)->start();
+}
+#endif
 ///////////////////////////////////////////////////////////////////////////////
 
 void WebViewCore::addPlugin(PluginWidgetAndroid* w)
@@ -3502,7 +3545,7 @@ void WebViewCore::popupReply(int index)
 {
     if (m_popupReply) {
         m_popupReply->replyInt(index);
-        Release(m_popupReply);
+        ::Release(m_popupReply);
         m_popupReply = 0;
     }
 }
@@ -3511,7 +3554,7 @@ void WebViewCore::popupReply(const int* array, int count)
 {
     if (m_popupReply) {
         m_popupReply->replyIntArray(array, count);
-        Release(m_popupReply);
+        ::Release(m_popupReply);
         m_popupReply = 0;
     }
 }
@@ -4224,6 +4267,14 @@ Vector<VisibleSelection> WebViewCore::getTextRanges(
     VisiblePosition endSelect =  visiblePositionForContentPoint(endX, endY);
     Position start = startSelect.deepEquivalent();
     Position end = endSelect.deepEquivalent();
+    if (isLtr(end)) {
+        // The end caret could be just to the right of the text.
+        endSelect =  visiblePositionForContentPoint(endX - 1, endY);
+        Position newEnd = endSelect.deepEquivalent();
+        if (!newEnd.isNull()) {
+            end = newEnd;
+        }
+    }
     Vector<VisibleSelection> ranges;
     if (!start.isNull() && !end.isNull()) {
         if (comparePositions(start, end) > 0) {
@@ -4881,6 +4932,11 @@ static void Pause(JNIEnv* env, jobject obj, jint nativeClass)
     SkANP::InitEvent(&event, kLifecycle_ANPEventType);
     event.data.lifecycle.action = kPause_ANPLifecycleAction;
     viewImpl->sendPluginEvent(event);
+#if ENABLE(WEB_AUDIO)
+    viewImpl->pauseAudioDestinations();
+#endif
+
+    viewImpl->setIsPaused(true);
 }
 
 static void Resume(JNIEnv* env, jobject obj, jint nativeClass)
@@ -4906,6 +4962,11 @@ static void Resume(JNIEnv* env, jobject obj, jint nativeClass)
     SkANP::InitEvent(&event, kLifecycle_ANPEventType);
     event.data.lifecycle.action = kResume_ANPLifecycleAction;
     viewImpl->sendPluginEvent(event);
+#if ENABLE(WEB_AUDIO)
+    viewImpl->resumeAudioDestinations();
+#endif
+
+    viewImpl->setIsPaused(false);
 }
 
 static void FreeMemory(JNIEnv* env, jobject obj, jint nativeClass)

@@ -31,7 +31,7 @@ endif
 # Control SVG compiling in webkit.
 # Default is true unless explictly disabled.
 ifneq ($(ENABLE_SVG),false)
-    ENABLE_SVG = true
+    ENABLE_SVG := true
 endif
 
 # Control complex scripts support compiling in webkit.
@@ -47,6 +47,22 @@ ifneq ($(ENABLE_AUTOFILL),false)
   ENABLE_AUTOFILL = true
 endif
 
+# Custom y-to-cpp rule
+define webkit-transform-y-to-cpp
+@mkdir -p $(dir $@)
+@echo "WebCore Yacc: $(PRIVATE_MODULE) <= $<"
+$(hide) $(YACC) $(PRIVATE_YACCFLAGS) -o $@ $<
+@touch $(@:$1=$(YACC_HEADER_SUFFIX))
+@echo '#ifndef '$(@F:$1=_h) > $(@:$1=.h)
+@echo '#define '$(@F:$1=_h) >> $(@:$1=.h)
+@cat $(@:$1=$(YACC_HEADER_SUFFIX)) >> $(@:$1=.h)
+@echo '#endif' >> $(@:$1=.h)
+@rm -f $(@:$1=$(YACC_HEADER_SUFFIX))
+endef
+ifneq ($(ENABLE_WEBAUDIO),false)
+  ENABLE_WEBAUDIO = true
+endif
+
 BASE_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
@@ -58,8 +74,6 @@ base_intermediates := $(call local-intermediates-dir)
 # Using := here prevents recursive expansion
 WEBKIT_SRC_FILES :=
 
-# We have to use bison 2.3
-include $(BASE_PATH)/bison_check.mk
 
 SOURCE_PATH := $(BASE_PATH)/Source
 WEBCORE_PATH := $(SOURCE_PATH)/WebCore
@@ -92,6 +106,8 @@ LOCAL_C_INCLUDES := \
 	external/skia/include/images \
 	external/skia/include/ports \
 	external/skia/include/utils \
+	external/skia/src/core \
+	external/skia/src/images \
 	external/skia/src/ports \
 	external/sqlite/dist \
 	frameworks/base/core/jni/android/graphics \
@@ -218,6 +234,17 @@ LOCAL_CFLAGS += -DWEBKIT_IMPLEMENTATION=1
 LOCAL_C_INCLUDES := $(LOCAL_C_INCLUDES) \
 	$(SOURCE_PATH)/ThirdParty/ANGLE/include/GLSLANG
 
+ifeq ($(ENABLE_WEBAUDIO),true)
+LOCAL_C_INCLUDES := $(LOCAL_C_INCLUDES) \
+	external/kissfft \
+	frameworks/native/include/media/openmax \
+	$(WEBCORE_PATH)/platform/audio \
+	$(WEBCORE_PATH)/platform/audio/android \
+	$(WEBCORE_PATH)/webaudio \
+	$(WEBKIT_PATH)/android/webaudio \
+	$(WEBKIT_PATH)/android/neon
+endif
+
 # Include WTF source file.
 d := Source/JavaScriptCore
 LOCAL_PATH := $(BASE_PATH)/$d
@@ -284,6 +311,10 @@ ifeq ($(TARGET_ARCH),x86)
 LOCAL_CFLAGS += -DANDROID_LARGE_MEMORY_DEVICE
 endif
 
+ifeq ($(ARCH_ARM_HAVE_NEON),true)
+LOCAL_CFLAGS += -D__USE_ARM_NEON__
+endif
+
 ifeq ($(ENABLE_SVG),true)
 LOCAL_CFLAGS += -DENABLE_SVG=1 -DENABLE_SVG_ANIMATION=1
 endif
@@ -331,8 +362,8 @@ LOCAL_SHARED_LIBRARIES := \
 	libgui \
 	libicuuc \
 	libicui18n \
+	liblog \
 	libmedia \
-	libmedia_native \
 	libnativehelper \
 	libskia \
 	libsqlite \
@@ -341,6 +372,10 @@ LOCAL_SHARED_LIBRARIES := \
 	libutils \
 	libui \
 	libz
+
+ifeq ($(ENABLE_WEBAUDIO),true)
+LOCAL_SHARED_LIBRARIES += libstagefright
+endif
 
 # We have to fake out some headers when using stlport.
 LOCAL_C_INCLUDES += \
@@ -357,10 +392,18 @@ LOCAL_CFLAGS += -DSUPPORT_COMPLEX_SCRIPTS=1
 endif
 
 # Build the list of static libraries
-LOCAL_STATIC_LIBRARIES := libxml2 libxslt libhyphenation libskiagpu libv8
+LOCAL_STATIC_LIBRARIES := libxml2 libxslt libhyphenation libv8
 
 ifeq ($(ENABLE_WEBGL),true)
 LOCAL_STATIC_LIBRARIES += libpng
+endif
+
+# WebAudio
+ifeq ($(ENABLE_WEBAUDIO),true)
+    LOCAL_STATIC_LIBRARIES += libkissfft
+    ifeq ($(ARCH_ARM_HAVE_NEON),true)
+        LOCAL_STATIC_LIBRARIES += libvmathneon
+    endif
 endif
 
 ifeq ($(ENABLE_AUTOFILL),true)
@@ -455,5 +498,16 @@ include $(BUILD_SHARED_LIBRARY)
 # Build the wds client
 include $(WEBKIT_PATH)/android/wds/client/Android.mk
 
+ifeq ($(ENABLE_WEBAUDIO),true)
+ifeq ($(ARCH_ARM_HAVE_NEON),true)
+# Build the VectorMath NEON routines
+include $(WEBKIT_PATH)/android/neon/Android.mk
+endif
+endif
+
 # Build the webkit merge tool.
 include $(BASE_PATH)/Tools/android/webkitmerge/Android.mk
+
+ifeq ($(ENABLE_WEBAUDIO),true)
+include $(BASE_PATH)/Source/WebCore/platform/audio/resources/webaudiores/Android.mk
+endif

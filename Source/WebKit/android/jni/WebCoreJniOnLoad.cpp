@@ -125,7 +125,6 @@ static RegistrationMethod gWebCoreRegMethods[] = {
 #endif
     { "DeviceMotionAndOrientationManager", android::registerDeviceMotionAndOrientationManager },
     { "CookieManager", android::registerCookieManager },
-    { "CacheManager", android::registerCacheManager },
 };
 
 EXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved)
